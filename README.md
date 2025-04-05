@@ -23,19 +23,28 @@ A Discord bot that impersonates Jerry Seinfeld using Google's Gemini API, provid
    cd Seinfeld
    ```
 
-2. Install required packages:
+2. Create and activate a virtual environment (recommended):
+   ```
+   # On Windows
+   python -m venv venv
+   venv\Scripts\activate
+
+   # On macOS/Linux
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+3. Install required packages:
    ```
    pip install -r requirements.txt
    ```
 
-3. Create a `.env` file in the project root with the following variables:
+4. Create a `.env` file in the project root with the following variables:
    ```
    GOOGLE_KEY=your_google_gemini_api_key
    SEINFELD_TOKEN=your_discord_bot_token
    SEINFELD_CHANNEL_ID=your_discord_channel_id
    ```
-
-4. Create an `images` directory in the project root (or let the bot create it automatically)
 
 ## 📝 Usage
 
