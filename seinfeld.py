@@ -14,6 +14,7 @@ from PIL import Image
 from io import BytesIO
 import uuid
 import datetime
+import asyncio
 
 load_dotenv()
 
@@ -44,6 +45,20 @@ print(f"SEINFELD_CHANNEL_ID: {SEINFELD_CHANNEL_ID}")
 bot = commands.Bot(command_prefix="~", intents=discord.Intents.all())
 google_client = genai.Client(api_key=GOOGLE_KEY)
 
+async def keep_typing(channel):
+    """Continuously show the typing indicator until the task is cancelled."""
+    print(f"Starting typing indicator in channel {channel.id}")
+    try:
+        while True:
+            print(f"Sending typing indicator to channel {channel.id}")
+            async with channel.typing():  # Use async with context manager
+                await asyncio.sleep(5)  # Sleep less than 10 seconds to ensure continuous typing
+    except asyncio.CancelledError:
+        # Task was cancelled, which is expected
+        print(f"Typing indicator cancelled for channel {channel.id}")
+        pass
+    except Exception as e:
+        print(f"Error in keep_typing: {type(e).__name__}: {str(e)}")
 
 @bot.tree.command(name="clear")
 @app_commands.describe(limit="Number of messages to delete (default: 100)")
@@ -120,17 +135,31 @@ async def on_message(message):
             return
 
         query = message.content
+        print(f"Processing message: '{query[:30]}...' in channel {message.channel.id}")
 
         # Check if this is an image generation request
         if query.lower().startswith("generate image:") or query.lower().startswith("create image:"):
-            async with message.channel.typing():
+            # Start continuous typing in the background
+            typing_task = asyncio.create_task(keep_typing(message.channel))
+
+            try:
                 prompt = query.split(":", 1)[1].strip()
                 try:
+                    print(f"Generating image for prompt: {prompt[:30]}...")
                     image_path = await generate_and_save_image(prompt)
+                    # Cancel typing before sending the response
+                    typing_task.cancel()
                     await message.reply(f"Here's your image:", file=discord.File(image_path))
                 except Exception as e:
                     print(f"Error generating image: {e}")
+                    # Cancel typing before sending the response
+                    typing_task.cancel()
                     await message.reply(file=discord.File(os.path.join(IMAGES_DIR, "no.jpg")))
+            except Exception as e:
+                # Make sure to cancel the typing task even if an error occurs
+                typing_task.cancel()
+                print(f"Exception during image generation: {e}")
+                raise e
             return
 
         previous_messages = [msg async for msg in message.channel.history(limit=15)]
@@ -157,7 +186,12 @@ async def on_message(message):
             # we don't send any history to the API
             formatted_history = []
 
+        # Start continuous typing in the background
+        typing_task = asyncio.create_task(keep_typing(message.channel))
+
         try:
+            # Create chat in the main thread
+            print("Creating Gemini chat")
             chat = google_client.chats.create(
                 model=chat_model_id,
                 history=formatted_history,
@@ -190,14 +224,32 @@ When responding to a prompt, always answer as if you are performing standup. Sta
                 )
             )
 
-            async with message.channel.typing():
-                try:
-                    response = chat.send_message(query)
-                    response_content = response.text
-                    await send_sectioned_response(message, response_content)
-                except Exception as e:
-                    print(f"Error generating response: {e}")
-                    await message.reply("I'm sorry, I encountered an error while generating a response.")
+            try:
+                # Run the API call in a separate thread to prevent blocking the event loop
+                print("Sending message to Gemini (non-blocking)")
+
+                # Define a function to run in a separate thread
+                def run_gemini_query(chat, query_text):
+                    print("Starting Gemini query in separate thread")
+                    response = chat.send_message(query_text)
+                    print("Gemini query completed in thread")
+                    return response
+
+                # Run the function in a separate thread
+                response = await asyncio.to_thread(run_gemini_query, chat, query)
+
+                response_content = response.text
+                print(f"Got response from Gemini, length: {len(response_content)}")
+
+                # Cancel typing before sending the response
+                typing_task.cancel()
+                await send_sectioned_response(message, response_content)
+                print("Response sent to Discord")
+            except Exception as e:
+                print(f"Error generating response: {e}")
+                # Cancel typing before sending the error message
+                typing_task.cancel()
+                await message.reply("I'm sorry, I encountered an error while generating a response.")
         except ValueError as e:
             print(f"Error with chat history: {e}")
             # Try again with no history
@@ -208,14 +260,33 @@ When responding to a prompt, always answer as if you are performing standup. Sta
                     response_modalities=["TEXT"]
                 )
             )
-            async with message.channel.typing():
-                try:
-                    response = chat.send_message(query)
-                    response_content = response.text
-                    await send_sectioned_response(message, response_content)
-                except Exception as e:
-                    print(f"Error generating response (retry): {e}")
-                    await message.reply("I'm sorry, I encountered an error while generating a response.")
+            try:
+                print("Retrying Gemini with no history")
+
+                # Run the API call in a separate thread
+                def run_retry_query(chat, query_text):
+                    print("Starting retry Gemini query in separate thread")
+                    response = chat.send_message(query_text)
+                    print("Retry Gemini query completed in thread")
+                    return response
+
+                # Run the function in a separate thread
+                response = await asyncio.to_thread(run_retry_query, chat, query)
+
+                response_content = response.text
+                # Cancel typing before sending the response
+                typing_task.cancel()
+                await send_sectioned_response(message, response_content)
+            except Exception as e:
+                print(f"Error generating response (retry): {e}")
+                # Cancel typing before sending the error message
+                typing_task.cancel()
+                await message.reply("I'm sorry, I encountered an error while generating a response.")
+        except Exception as e:
+            # Make sure to cancel the typing task even if an error occurs
+            typing_task.cancel()
+            print(f"Exception during Gemini response: {e}")
+            raise e
 
 async def generate_and_save_image(prompt):
     """Generate an image using Gemini API and save it to the images directory.
