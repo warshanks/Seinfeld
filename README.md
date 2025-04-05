@@ -1,21 +1,21 @@
-# Seinfeld Discord Bot
+# 🎭 Seinfeld Discord Bot
 
 A Discord bot that impersonates Jerry Seinfeld using Google's Gemini API, providing observational humor and image generation capabilities.
 
-## Features
+## ✨ Features
 
-- **Jerry Seinfeld Chat**: Responds to messages in the signature observational humor style of Jerry Seinfeld
-- **Web Search Integration**: Uses Google Search to provide up-to-date information in responses
-- **Image Generation**: Creates images based on text prompts using Gemini's image API
-- **Message Management**: Commands to clear conversation history
+- 🎙️ **Jerry Seinfeld Chat**: Responds to messages in the signature observational humor style of Jerry Seinfeld
+- 🔍 **Web Search Integration**: Uses Google Search to provide up-to-date information in responses
+- 🖼️ **Image Generation**: Creates images based on text prompts using Gemini's image API
+- 🧹 **Message Management**: Commands to clear conversation history
 
-## Requirements
+## 📋 Requirements
 
 - Python 3.8+
 - Discord Bot Token
 - Google Gemini API Key
 
-## Setup
+## 🚀 Setup
 
 1. Clone this repository:
    ```
@@ -37,7 +37,7 @@ A Discord bot that impersonates Jerry Seinfeld using Google's Gemini API, provid
 
 4. Create an `images` directory in the project root (or let the bot create it automatically)
 
-## Usage
+## 📝 Usage
 
 1. Run the bot:
    ```
@@ -46,18 +46,18 @@ A Discord bot that impersonates Jerry Seinfeld using Google's Gemini API, provid
 
 2. Chat with the bot in your designated Discord channel
 
-## Commands
+## 🤖 Commands
 
 - `/clear [limit=100]` - Delete a number of messages from the current channel
 - `/model [new_model_id]` - Change the Gemini model being used (admin only)
 - `/image [prompt]` - Generate an image based on a text prompt
 
-## Image Generation
+## 🎨 Image Generation
 
 You can also generate images by starting a message with:
 - `generate image: [prompt]`
 - `create image: [prompt]`
 
-## Contributing
+## 👥 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
