@@ -10,11 +10,10 @@ import os
 import discord
 from discord.ext import commands
 from discord import app_commands
-from PIL import Image
-from io import BytesIO
-import uuid
-import datetime
 import asyncio
+
+# Import utility functions from our library
+from utils import generate_and_save_image, send_sectioned_response, keep_typing, parse_youtube_links, register_model_command, register_clear_command
 
 load_dotenv()
 
@@ -45,57 +44,11 @@ print(f"SEINFELD_CHANNEL_ID: {SEINFELD_CHANNEL_ID}")
 bot = commands.Bot(command_prefix="~", intents=discord.Intents.all())
 google_client = genai.Client(api_key=GOOGLE_KEY)
 
-async def keep_typing(channel):
-    """Continuously show the typing indicator until the task is cancelled."""
-    print(f"Starting typing indicator in channel {channel.id}")
-    try:
-        while True:
-            print(f"Sending typing indicator to channel {channel.id}")
-            async with channel.typing():  # Use async with context manager
-                await asyncio.sleep(5)  # Sleep less than 10 seconds to ensure continuous typing
-    except asyncio.CancelledError:
-        # Task was cancelled, which is expected
-        print(f"Typing indicator cancelled for channel {channel.id}")
-        pass
-    except Exception as e:
-        print(f"Error in keep_typing: {type(e).__name__}: {str(e)}")
+# Register model change command
+register_model_command(bot, globals())
 
-@bot.tree.command(name="clear")
-@app_commands.describe(limit="Number of messages to delete (default: 100)")
-async def clear(interaction: discord.Interaction, limit: int = 100):
-    """Clears messages from the current channel."""
-    # Check if the user has the required permissions
-    if not interaction.channel.permissions_for(interaction.user).manage_messages:
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-        return
-
-    # Defer the response to allow for longer processing time
-    await interaction.response.defer(ephemeral=True)
-
-    try:
-        # Delete messages from the channel
-        deleted = await interaction.channel.purge(limit=limit)
-        await interaction.followup.send(f"Successfully deleted {len(deleted)} messages.", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.followup.send("I don't have permission to delete messages in this channel.", ephemeral=True)
-    except discord.HTTPException as e:
-        await interaction.followup.send(f"Failed to delete messages: {str(e)}", ephemeral=True)
-
-@bot.tree.command(name="model")
-@app_commands.describe(new_model_id="New model ID to use for Gemini API")
-async def change_model(interaction: discord.Interaction, new_model_id: str):
-    """Changes the Gemini chat model being used."""
-    global chat_model_id
-
-    # Check if the user has the required permissions (admin only)
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("Only administrators can change the model.", ephemeral=True)
-        return
-
-    old_model = chat_model_id
-    chat_model_id = new_model_id
-
-    await interaction.response.send_message(f"Chat model changed from `{old_model}` to `{new_model_id}`", ephemeral=True)
+# Register clear command
+register_clear_command(bot, SEINFELD_CHANNEL_ID)
 
 @bot.tree.command(name="image")
 @app_commands.describe(prompt="Description of the image you want to generate")
@@ -104,7 +57,7 @@ async def generate_image(interaction: discord.Interaction, prompt: str):
     await interaction.response.defer(thinking=True)
 
     try:
-        image_path = await generate_and_save_image(prompt)
+        image_path = await generate_and_save_image(prompt, google_client, image_model_id)
         await interaction.followup.send(f"Generated image based on: {prompt}", file=discord.File(image_path))
     except Exception as e:
         print(f"Error generating image: {e}")
@@ -146,7 +99,7 @@ async def on_message(message):
                 prompt = query.split(":", 1)[1].strip()
                 try:
                     print(f"Generating image for prompt: {prompt[:30]}...")
-                    image_path = await generate_and_save_image(prompt)
+                    image_path = await generate_and_save_image(prompt, google_client, image_model_id)
                     # Cancel typing before sending the response
                     typing_task.cancel()
                     await message.reply(f"Here's your image:", file=discord.File(image_path))
@@ -231,7 +184,11 @@ When responding to a prompt, always answer as if you are performing standup. Sta
                 # Define a function to run in a separate thread
                 def run_gemini_query(chat, query_text):
                     print("Starting Gemini query in separate thread")
-                    response = chat.send_message(query_text)
+
+                    # Check for YouTube links in the message
+                    message_content = parse_youtube_links(query_text)
+                    response = chat.send_message(message_content)
+
                     print("Gemini query completed in thread")
                     return response
 
@@ -249,7 +206,13 @@ When responding to a prompt, always answer as if you are performing standup. Sta
                 print(f"Error generating response: {e}")
                 # Cancel typing before sending the error message
                 typing_task.cancel()
-                await message.reply("I'm sorry, I encountered an error while generating a response.")
+
+                # Check for model overload error
+                error_str = str(e)
+                if "The model is overloaded" in error_str or "UNAVAILABLE" in error_str:
+                    await message.reply("The Gemini model is currently overloaded. Please try again later.")
+                else:
+                    await message.reply("I'm sorry, I encountered an error while generating a response.")
         except ValueError as e:
             print(f"Error with chat history: {e}")
             # Try again with no history
@@ -266,7 +229,11 @@ When responding to a prompt, always answer as if you are performing standup. Sta
                 # Run the API call in a separate thread
                 def run_retry_query(chat, query_text):
                     print("Starting retry Gemini query in separate thread")
-                    response = chat.send_message(query_text)
+
+                    # Check for YouTube links in the message
+                    message_content = parse_youtube_links(query_text)
+                    response = chat.send_message(message_content)
+
                     print("Retry Gemini query completed in thread")
                     return response
 
@@ -281,93 +248,18 @@ When responding to a prompt, always answer as if you are performing standup. Sta
                 print(f"Error generating response (retry): {e}")
                 # Cancel typing before sending the error message
                 typing_task.cancel()
-                await message.reply("I'm sorry, I encountered an error while generating a response.")
+
+                # Check for model overload error
+                error_str = str(e)
+                if "The model is overloaded" in error_str or "UNAVAILABLE" in error_str:
+                    await message.reply("The Gemini model is currently overloaded. Please try again later.")
+                else:
+                    await message.reply("I'm sorry, I encountered an error while generating a response.")
         except Exception as e:
             # Make sure to cancel the typing task even if an error occurs
             typing_task.cancel()
             print(f"Exception during Gemini response: {e}")
             raise e
-
-async def generate_and_save_image(prompt):
-    """Generate an image using Gemini API and save it to the images directory.
-
-    Args:
-        prompt (str): The text description of the image to generate
-
-    Returns:
-        str: The file path of the saved image
-
-    Raises:
-        Exception: If no image was generated or an error occurred
-    """
-    try:
-        response = google_client.models.generate_images(
-            model=image_model_id,
-            prompt=prompt,
-            config=genai.types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio="16:9"
-            )
-        )
-
-        # Create a unique filename with timestamp and UUID
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_id = str(uuid.uuid4())[:8]
-        filename = f"{timestamp}_{unique_id}.png"
-        image_path = os.path.join(IMAGES_DIR, filename)
-
-        # Save the image
-        for generated_image in response.generated_images:
-            image = Image.open(BytesIO(generated_image.image.image_bytes))
-            image.save(image_path)
-            return image_path
-
-        # If we get here, no images were generated
-        print("ERROR: No images were generated in the response")
-        print(f"Full API response: {response}")
-        print(f"Response object details: {dir(response)}")
-        raise Exception("No image was generated in the response")
-    except Exception as e:
-        print(f"Exception in image generation: {type(e).__name__}: {str(e)}")
-        if "'NoneType' object is not iterable" in str(e):
-            print(f"Full API response that caused NoneType error: {response}")
-            print(f"Response object details: {dir(response)}")
-        if hasattr(e, 'response'):
-            print(f"Response in exception: {e.response}")
-        raise
-
-async def send_sectioned_response(message, response_content, max_length=1500):
-    """Split and send a response in sections if it exceeds Discord's message length limit.
-
-    Args:
-        message (discord.Message): The original message to reply to
-        response_content (str): The content to send
-        max_length (int, optional): Maximum length per message. Defaults to 1999.
-    """
-    # Split on double newlines to preserve formatting
-    sections = response_content.split('\n\n')
-    current_section = ""
-
-    for i, section in enumerate(sections):
-        # If adding this section would exceed the limit
-        if len(current_section) + len(section) + 2 > max_length:
-            if current_section:
-                try:
-                    await message.reply(current_section.strip())
-                except Exception as e:
-                    print(f"Error sending section: {e}")
-            current_section = section
-        else:
-            if current_section:
-                current_section += "\n\n" + section
-            else:
-                current_section = section
-
-    if current_section:
-        try:
-            await message.reply(current_section.strip())
-        except Exception as e:
-            print(f"Error sending final section: {e}")
 
 def main():
     """Initialize and run the Discord bot for Seinfeld."""
