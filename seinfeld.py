@@ -265,7 +265,7 @@ async def generate_and_save_image(prompt):
             print(f"Response in exception: {e.response}")
         raise
 
-async def send_sectioned_response(message, response_content, max_length=1999):
+async def send_sectioned_response(message, response_content, max_length=1500):
     """Split and send a response in sections if it exceeds Discord's message length limit.
 
     Args:
